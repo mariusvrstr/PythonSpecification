@@ -1,30 +1,15 @@
-from src.common.specification import Specification, And, Or
+from src.common.specification import Specification, apply_specification
 from src.database.sqllite_database import SQLLiteDatabase
 from src.database import db_models
 from src.database.db_models import User
 from typing import List
 
-''' ISSUES
-Works in a user list but not as a DB Query
+'''
+Compiles but filtering with _or / _and is not working as expected
 '''
 
 database = SQLLiteDatabase()
 db_models.Base.metadata.create_all(database.engine)
-
-class UserIsActive(Specification):
-  def is_satisfied_by(self, user:User):
-    # print(f'User [{user.name}] check if active [{user.is_active}] ')
-    return user.is_active
-
-class FromSpecificDomain(Specification):
-    domain = None
-    def __init__(self, domain) -> None:
-        self.domain = domain
-        super().__init__()
-    
-    def is_satisfied_by(self, user:User):
-        # print(f'User [{user.name}] check domain [{user.email}]') 
-        return user.email.endswith(self.domain)  
 
 session = database.create_session()
 
@@ -39,29 +24,17 @@ def add_users():
 if session.query(User).count() == 0:
     add_users()
 
-specification = (UserIsActive() & FromSpecificDomain(domain="@example.com"))
+user_is_active = Specification(lambda user: user.is_active == True)
+user_part_of_example = Specification(lambda user: user.email.endswith("@example.com"))
 
-all_users = session.query(User).all()
+spec = user_is_active.or_specification(user_part_of_example)
 
-results = []
+query = session.query(User)
+filtered_query = apply_specification(query, spec)
+found_users = filtered_query.all()
 
-for user in all_users:
-    if specification.is_satisfied_by(user):
-        results.append(user)
-
-'''
-Not working
-results = session.query(User).filter(specification.is_satisfied_by(User)).all()
-'''
-
-for item in results:
-    print(f"Found [{item.name}] - [{item.email}]")
-
-
-
-
-
-
+for user in found_users:
+    print(f"User [{user.name}] - [{user.email}]")
 
 
 

@@ -1,124 +1,32 @@
+from typing import Callable
+from sqlalchemy.orm import Query
+from sqlalchemy.ext.declarative import DeclarativeMeta
+
 class Specification:
+    def __init__(self, condition: Callable = None):
+        self.condition = condition
 
-    def __and__(self, other):
-        return And(self, other)
+    def is_satisfied_by(self, entity) -> bool:
+        if self.condition is None:
+            return True
+        return self.condition(entity)
 
-    def __or__(self, other):
-        return Or(self, other)
+    def to_sqlalchemy_filter(self, model_class: DeclarativeMeta) -> Callable:
+        if self.condition is None:
+            return lambda: True
+        return lambda: self.condition(model_class)
 
-    def __xor__(self, other):
-        return Xor(self, other)
+    def and_specification(self, other: 'Specification') -> 'Specification':
+        return Specification(lambda entity: self.is_satisfied_by(entity) and other.is_satisfied_by(entity))
 
-    def __invert__(self):
-        return Invert(self)
+    def or_specification(self, other: 'Specification') -> 'Specification':
+        return Specification(lambda entity: self.is_satisfied_by(entity) or other.is_satisfied_by(entity))
 
-    def is_satisfied_by(self, candidate):
-        raise NotImplementedError()
-
-    def remainder_unsatisfied_by(self, candidate):
-        if self.is_satisfied_by(candidate):
-            return None
-        else:
-            return self
-
-
-class CompositeSpecification(Specification):
-    pass
+    def not_specification(self) -> 'Specification':
+        return Specification(lambda entity: not self.is_satisfied_by(entity))
 
 
-class MultaryCompositeSpecification(CompositeSpecification):
-
-    def __init__(self, *specifications):
-        self.specifications = specifications
-
-
-class And(MultaryCompositeSpecification):
-
-    def __and__(self, other):
-        if isinstance(other, And):
-            self.specifications += other.specifications
-        else:
-            self.specifications += (other, )
-        return self
-
-    def is_satisfied_by(self, candidate):
-        satisfied = all([
-            specification.is_satisfied_by(candidate)
-            for specification in self.specifications
-        ])
-        return satisfied
-
-    def remainder_unsatisfied_by(self, candidate):
-        non_satisfied = [
-            specification
-            for specification in self.specifications
-            if not specification.is_satisfied_by(candidate)
-        ]
-        if not non_satisfied:
-            return None
-        if len(non_satisfied) == 1:
-            return non_satisfied[0]
-        if len(non_satisfied) == len(self.specifications):
-            return self
-        return And(*non_satisfied)
-
-
-class Or(MultaryCompositeSpecification):
-
-    def __or__(self, other):
-        if isinstance(other, Or):
-            self.specifications += other.specifications
-        else:
-            self.specifications += (other, )
-        return self
-
-    def is_satisfied_by(self, candidate):
-        satisfied = any([
-            specification.is_satisfied_by(candidate)
-            for specification in self.specifications
-        ])
-        return satisfied
-
-
-class UnaryCompositeSpecification(CompositeSpecification):
-
-    def __init__(self, specification):
-        self.specification = specification
-
-
-class Invert(UnaryCompositeSpecification):
-
-    def is_satisfied_by(self, candidate):
-        return not self.specification.is_satisfied_by(candidate)
-
-
-class BinaryCompositeSpecification(CompositeSpecification):
-
-    def __init__(self, left, right):
-        self.left = left
-        self.right = right
-
-
-class Xor(BinaryCompositeSpecification):
-
-    def is_satisfied_by(self, candidate):
-        return (
-            self.left.is_satisfied_by(candidate) ^
-            self.right.is_satisfied_by(candidate)
-        )
-
-
-class NullaryCompositeSpecification(CompositeSpecification):
-    pass
-
-
-class TrueSpecification(NullaryCompositeSpecification):
-
-    def is_satisfied_by(self, candidate):
-        return True
-
-
-class FalseSpecification(NullaryCompositeSpecification):
-
-    def is_satisfied_by(self, candidate):
-        return False
+def apply_specification(query: Query, spec: Specification) -> Query:
+    model_class = query.column_descriptions[0]['type']
+    filter_expr = spec.to_sqlalchemy_filter(model_class)
+    return query.filter(filter_expr())
